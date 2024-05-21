@@ -1,0 +1,102 @@
+function sendEventRemindersForSubscribedCalendars() {
+  var now = new Date();
+  var twelveHoursInMilliseconds = 12 * 60 * 60 * 1000;
+
+  // Fetch all calendars accessible to the script's user using Calendar API
+  var calendars = Calendar.CalendarList.list().items;
+
+  Logger.log("Script started at: " + now);
+
+  // Initialize or retrieve the stored list of processed event IDs
+  var scriptProperties = PropertiesService.getScriptProperties();
+  var processedEventIds = scriptProperties.getProperty('processedEventIds');
+  if (!processedEventIds) {
+    processedEventIds = [];
+  } else {
+    processedEventIds = JSON.parse(processedEventIds);
+  }
+
+  // Use a Set to collect unique attendee emails and event titles
+  var uniqueAttendeeEmails = new Set();
+  var eventTitles = new Set();
+
+  for (var c = 0; c < calendars.length; c++) {
+    var calendar = calendars[c];
+    var calendarId = calendar.id;
+    var calendarName = calendar.summary;
+
+    // Fetch upcoming events from the calendar
+    var events = Calendar.Events.list(calendarId, {
+      timeMin: now.toISOString(),
+      timeMax: new Date(now.getTime() + twelveHoursInMilliseconds).toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime'
+    }).items;
+
+    Logger.log("Found " + events.length + " events in the calendar: " + calendarName);
+
+    for (var i = 0; i < events.length; i++) {
+      var event = events[i];
+      var eventId = event.id;
+      var startTime = new Date(event.start.dateTime);
+      var timeDifference = startTime.getTime() - now.getTime();
+
+      // Check if the event is within the next 12 hours and has not been processed
+      if (timeDifference < twelveHoursInMilliseconds && timeDifference > 0) {
+        if (processedEventIds.includes(eventId)) {
+          // Event has already been processed (reminder already sent)
+          Logger.log("Reminder already sent for event: " + event.summary);
+        } else {
+          // Process the event and send reminder
+
+          Logger.log("Processing event: " + event.summary);
+          Logger.log("Event Start Time: " + startTime);
+
+          // Collect unique attendee emails for this event
+          if (event.attendees) {
+            event.attendees.forEach(function(attendee) {
+              if (attendee.email) {
+                uniqueAttendeeEmails.add(attendee.email);
+              }
+            });
+          }
+
+          // Collect unique event title
+          eventTitles.add(event.summary);
+
+          // Mark the event as processed to avoid duplicates
+          processedEventIds.push(eventId);
+        }
+      }
+    }
+  }
+
+  // Update the list of processed event IDs in the script properties
+  scriptProperties.setProperty('processedEventIds', JSON.stringify(processedEventIds));
+
+  // Prepare email subject based on unique event titles
+  var subject = "Event Reminder: " + Array.from(eventTitles).join(', ');
+  
+// Prepare email content
+  var message = "This is a reminder for the following upcoming events within the next 12 hours:\n\n" +
+                "Events: " + Array.from(eventTitles).join(', ') + "\n\n" +
+                "Please make sure to attend these events.\n\n" +
+                "PLEASE DO NOT REPLY TO THIS AUTOMATED REMINDER.\n\n" +
+                "Thank you!";
+
+
+
+  // Convert Set of attendee emails to an array
+  var attendeeEmailArray = Array.from(uniqueAttendeeEmails);
+
+  // Check if there are valid attendees before sending email
+  if (attendeeEmailArray.length > 0) {
+    // Send a single email to all attendees
+    MailApp.sendEmail(attendeeEmailArray.join(','), subject, message);
+    Logger.log("Reminder email sent to attendees: " + attendeeEmailArray.join(','));
+  } else {
+    Logger.log("No valid attendee emails found. Email not sent.");
+  }
+
+  Logger.log("Script completed at: " + new Date());
+}
